@@ -1,0 +1,22 @@
+# API Dependencies
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+pydantic==2.10.4
+aiosqlite==0.20.0
+python-multipart==0.0.18
+sse-starlette==2.2.1
+
+# Testing
+pytest==8.3.4
+pytest-asyncio==0.24.0
+pytest-cov==6.0.0
+httpx==0.28.1
+
+# Pipeline Dependencies
+ultralytics==8.3.57
+supervision==0.25.1
+opencv-python-headless==4.10.0.84
+numpy>=1.26.0
+tqdm==4.67.1
+pandas==2.2.3
+openpyxl==3.1.5

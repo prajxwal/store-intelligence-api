@@ -1,0 +1,7 @@
+# Lightweight API-only dependencies (no ML pipeline)
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+pydantic==2.10.4
+aiosqlite==0.20.0
+python-multipart==0.0.18
+sse-starlette==2.2.1
