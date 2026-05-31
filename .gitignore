@@ -1,14 +1,12 @@
 # Python
 __pycache__/
 *.py[cod]
-*$py.class
-*.so
 *.egg-info/
 dist/
 build/
-.eggs/
+*.egg
 
-# Virtual environments
+# Virtual environment
 venv/
 .venv/
 env/
@@ -21,31 +19,25 @@ env/
 
 # Database
 *.db
-*.sqlite3
-
-# Dataset - do not commit video files
-Dataset/
-data/
-*.mp4
-*.avi
+*.db-wal
+*.db-shm
 
 # Model weights
 *.pt
 *.onnx
-*.engine
+
+# Pipeline output
+output/
+runs/
+
+# Coverage / Testing
+.coverage
+htmlcov/
+.pytest_cache/
 
 # OS
 .DS_Store
 Thumbs.db
 
-# Environment
-.env
-.env.local
-
-# Coverage
-htmlcov/
-.coverage
-.coverage.*
-
-# Logs
-*.log
+# Dataset (large files — not tracked)
+Dataset/

@@ -13,10 +13,9 @@ pytest-cov==6.0.0
 httpx==0.28.1
 
 # Pipeline Dependencies
-ultralytics==8.3.57
-supervision==0.25.1
-opencv-python-headless==4.10.0.84
+ultralytics>=8.3.0
+supervision>=0.25.0
+opencv-python-headless>=4.10.0
 numpy>=1.26.0
-tqdm==4.67.1
-pandas==2.2.3
-openpyxl==3.1.5
+tqdm>=4.67.0
+openpyxl>=3.1.0

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import time
 import uuid
 from contextlib import asynccontextmanager
@@ -178,10 +179,9 @@ app.include_router(health_router, tags=["health"])
 app.include_router(dashboard_router, tags=["dashboard"])
 
 # Mount static files for dashboard
-import os
-dashboard_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "dashboard")
-if os.path.exists(dashboard_dir):
-    app.mount("/dashboard/static", StaticFiles(directory=dashboard_dir), name="dashboard_static")
+_dashboard_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "dashboard")
+if os.path.exists(_dashboard_dir):
+    app.mount("/dashboard/static", StaticFiles(directory=_dashboard_dir), name="dashboard_static")
 
 
 # ─── Root Endpoint ────────────────────────────────────────────────────────────

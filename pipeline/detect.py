@@ -7,15 +7,14 @@ classifies zones, detects staff, and emits structured events.
 from __future__ import annotations
 
 import argparse
-import cv2
 import logging
-import numpy as np
 import os
-import sys
 import time
-from collections import defaultdict
 from datetime import datetime, timedelta
 from typing import Optional
+
+import cv2
+import numpy as np
 
 from ultralytics import YOLO
 from tqdm import tqdm
@@ -420,81 +419,6 @@ def process_camera(
     }
 
 
-def load_pos_data(emitter: EventEmitter):
-    """Load POS transactions from CSV and submit to API."""
-    import pandas as pd
-
-    csv_path = os.path.join(
-        os.path.dirname(os.path.dirname(__file__)),
-        "Dataset",
-        "Brigade_Bangalore_10_April_26 (1)bc6219c.csv",
-    )
-    
-    if not os.path.exists(csv_path):
-        logger.warning(f"POS data not found at: {csv_path}")
-        return
-
-    logger.info(f"Loading POS data from: {csv_path}")
-    df = pd.read_csv(csv_path)
-
-    # Extract unique transactions
-    transactions = []
-    seen_txn = set()
-    
-    for _, row in df.iterrows():
-        txn_id = str(row.get("invoice_number", row.get("order_id", "")))
-        if txn_id in seen_txn:
-            continue
-        seen_txn.add(txn_id)
-
-        order_date = str(row.get("order_date", ""))
-        order_time = str(row.get("order_time", ""))
-        store_id = str(row.get("store_id", STORE_ID))
-        
-        # Parse date and time
-        try:
-            if order_date and order_time:
-                # Date format: 10-04-2026, Time format: 16:55:36
-                dt = datetime.strptime(f"{order_date} {order_time}", "%d-%m-%Y %H:%M:%S")
-                timestamp = dt.strftime("%Y-%m-%dT%H:%M:%SZ")
-            else:
-                continue
-        except Exception:
-            continue
-
-        basket_value = float(row.get("total_amount", row.get("GMV", 0)) or 0)
-        customer = str(row.get("customer_name", "Guest"))
-
-        transactions.append({
-            "transaction_id": txn_id,
-            "store_id": store_id,
-            "timestamp": timestamp,
-            "order_date": order_date,
-            "order_time": order_time,
-            "customer_name": customer,
-            "basket_value": basket_value,
-        })
-
-    logger.info(f"Found {len(transactions)} unique POS transactions")
-
-    # Submit to API
-    try:
-        import httpx
-        with httpx.Client(timeout=30.0) as client:
-            # Insert POS data via a custom endpoint or directly
-            for txn in transactions:
-                try:
-                    client.post(
-                        f"{emitter.store_id and 'http://localhost:8000'}/events/ingest/pos",
-                        json=txn,
-                    )
-                except Exception:
-                    pass
-    except Exception as e:
-        logger.warning(f"Could not submit POS data to API: {e}")
-
-    # Also write to the database directly via a helper
-    return transactions
 
 
 def run_pipeline(
@@ -540,9 +464,6 @@ def run_pipeline(
     # Finalize — flush remaining events to API
     emitter.finalize()
 
-    # Load POS data
-    pos_data = load_pos_data(emitter)
-
     elapsed = time.time() - start
     logger.info("=" * 60)
     logger.info(f"Pipeline complete in {elapsed:.1f}s")
@@ -551,7 +472,8 @@ def run_pipeline(
         logger.info(f"  {cam_id}: {res.get('total_tracks', 0)} tracks, "
                     f"{res.get('entry_count', 0)} entries")
     logger.info(f"Output: {emitter.output_file}")
-    logger.info("=" * 60)
+    logger.info("="  * 60)
+    logger.info("Tip: Run 'python -m pipeline.load_pos' to load POS data")
 
     return results
 
