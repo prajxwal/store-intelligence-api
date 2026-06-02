@@ -24,7 +24,7 @@ from pipeline.config import (
     DETECTION_CONFIDENCE_THRESHOLD, PERSON_CLASS_ID,
     FRAME_SKIP, DWELL_THRESHOLD_MS, DWELL_EMIT_INTERVAL_MS,
     STAFF_PRESENCE_THRESHOLD, STAFF_ZONE_COUNT_THRESHOLD,
-    VIDEO_START_TIMES, TRACK_BUFFER,
+    VIDEO_START_TIMES, TRACK_BUFFER, ZONE_METADATA,
 )
 from pipeline.emit import EventEmitter
 
@@ -265,7 +265,7 @@ def process_camera(
                 # Create or update track
                 if track_id not in tracks:
                     visitor_counter += 1
-                    visitor_id = f"VIS_{visitor_counter:04d}"
+                    visitor_id = f"ID_{60000 + visitor_counter}"
                     tracks[track_id] = PersonTrack(track_id, visitor_id, current_time)
 
                 track = tracks[track_id]
@@ -278,33 +278,36 @@ def process_camera(
                     # Zone transition detected
                     old_zone = track.current_zone
 
-                    # Emit ZONE_EXIT for old zone
+                    # Emit zone_exited for old zone
                     if old_zone and old_zone != "ENTRY":
                         dwell = int((current_time - track.zone_enter_time).total_seconds() * 1000) \
                                 if track.zone_enter_time else 0
-                        emitter.emit(emitter.create_event(
+                        emitter.emit(emitter.create_zone_event(
                             camera_id=camera_id,
-                            visitor_id=track.visitor_id,
-                            event_type="ZONE_EXIT",
+                            track_id=track.track_id,
+                            event_type="zone_exited",
                             timestamp=current_time,
-                            zone_id=old_zone,
-                            dwell_ms=dwell,
+                            zone=old_zone,
+                            hotspot_x=cx,
+                            hotspot_y=cy,
                             confidence=conf,
                         ))
 
-                    # Emit ZONE_ENTER for new zone
+                    # Emit zone_entered for new zone
                     if zone != "ENTRY":
                         track.zones_visited.add(zone)
-                        emitter.emit(emitter.create_event(
+                        emitter.emit(emitter.create_zone_event(
                             camera_id=camera_id,
-                            visitor_id=track.visitor_id,
-                            event_type="ZONE_ENTER",
+                            track_id=track.track_id,
+                            event_type="zone_entered",
                             timestamp=current_time,
-                            zone_id=zone,
+                            zone=zone,
+                            hotspot_x=cx,
+                            hotspot_y=cy,
                             confidence=conf,
                         ))
 
-                        # Check if billing zone → emit BILLING_QUEUE_JOIN
+                        # Check if billing zone → emit queue event
                         if zone in ("BILLING", "CASH_COUNTER"):
                             # Count people currently in billing zone
                             queue_depth = sum(
@@ -312,16 +315,9 @@ def process_camera(
                                 if t.current_zone in ("BILLING", "CASH_COUNTER")
                                    and t.track_id != track_id
                             )
-                            if queue_depth > 0:
-                                emitter.emit(emitter.create_event(
-                                    camera_id=camera_id,
-                                    visitor_id=track.visitor_id,
-                                    event_type="BILLING_QUEUE_JOIN",
-                                    timestamp=current_time,
-                                    zone_id=zone,
-                                    confidence=conf,
-                                    queue_depth=queue_depth,
-                                ))
+                            # Store join time for later queue_completed event
+                            track.queue_join_time = current_time
+                            track.queue_position = queue_depth + 1
 
                     track.current_zone = zone
                     track.zone_enter_time = current_time
@@ -341,7 +337,7 @@ def process_camera(
                             emitter.emit(emitter.create_event(
                                 camera_id=camera_id,
                                 visitor_id=track.visitor_id,
-                                event_type="ZONE_DWELL",
+                                event_type="zone_dwell",
                                 timestamp=current_time,
                                 zone_id=track.current_zone,
                                 dwell_ms=dwell_ms,
@@ -358,20 +354,34 @@ def process_camera(
                     if direction == "ENTRY" and not track.has_entered:
                         track.has_entered = True
                         entry_count += 1
-                        emitter.emit(emitter.create_event(
+                        emitter.emit(emitter.create_entry_exit_event(
                             camera_id=camera_id,
                             visitor_id=track.visitor_id,
-                            event_type="ENTRY",
+                            event_type="entry",
                             timestamp=current_time,
                             confidence=conf,
                         ))
                     elif direction == "EXIT" and not track.has_exited:
                         track.has_exited = True
                         exit_count += 1
-                        emitter.emit(emitter.create_event(
+                        # Emit queue_completed if they were in billing
+                        if hasattr(track, 'queue_join_time') and track.queue_join_time:
+                            wait_s = int((current_time - track.queue_join_time).total_seconds())
+                            emitter.emit(emitter.create_queue_event(
+                                camera_id=camera_id,
+                                track_id=track.track_id,
+                                event_type="queue_completed",
+                                zone="BILLING",
+                                queue_join_ts=track.queue_join_time,
+                                queue_exit_ts=current_time,
+                                wait_seconds=wait_s,
+                                queue_position_at_join=getattr(track, 'queue_position', 1),
+                                abandoned=False,
+                            ))
+                        emitter.emit(emitter.create_entry_exit_event(
                             camera_id=camera_id,
                             visitor_id=track.visitor_id,
-                            event_type="EXIT",
+                            event_type="exit",
                             timestamp=current_time,
                             confidence=conf,
                         ))
@@ -385,15 +395,29 @@ def process_camera(
                 if track.current_zone and track.current_zone != "ENTRY":
                     dwell = int((current_time - track.zone_enter_time).total_seconds() * 1000) \
                             if track.zone_enter_time else 0
-                    emitter.emit(emitter.create_event(
+                    emitter.emit(emitter.create_zone_event(
                         camera_id=camera_id,
-                        visitor_id=track.visitor_id,
-                        event_type="ZONE_EXIT",
+                        track_id=track.track_id,
+                        event_type="zone_exited",
                         timestamp=current_time,
-                        zone_id=track.current_zone,
-                        dwell_ms=dwell,
+                        zone=track.current_zone,
                         confidence=track.avg_confidence,
                     ))
+                    # If leaving billing zone → queue_abandoned
+                    if track.current_zone in ("BILLING", "CASH_COUNTER"):
+                        if hasattr(track, 'queue_join_time') and track.queue_join_time:
+                            wait_s = int((current_time - track.queue_join_time).total_seconds())
+                            emitter.emit(emitter.create_queue_event(
+                                camera_id=camera_id,
+                                track_id=track.track_id,
+                                event_type="queue_abandoned",
+                                zone="BILLING",
+                                queue_join_ts=track.queue_join_time,
+                                queue_exit_ts=current_time,
+                                wait_seconds=wait_s,
+                                queue_position_at_join=getattr(track, 'queue_position', 1),
+                                abandoned=True,
+                            ))
 
         prev_track_ids = current_track_ids
 
