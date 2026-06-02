@@ -11,6 +11,7 @@ import os
 import uuid
 import logging
 import httpx
+import numpy as np
 from datetime import datetime
 from typing import Optional
 
@@ -116,8 +117,8 @@ class EventEmitter:
             "zone_type": meta.get("zone_type", "SHELF"),
             "is_revenue_zone": meta.get("is_revenue_zone", "Yes"),
             "event_time": timestamp.strftime("%Y-%m-%dT%H:%M:%S.%f"),
-            "zone_hotspot_x": round(hotspot_x, 1),
-            "zone_hotspot_y": round(hotspot_y, 1),
+            "zone_hotspot_x": round(float(hotspot_x), 1),
+            "zone_hotspot_y": round(float(hotspot_y), 1),
             "gender": gender_pred,
             "age": age_pred,
             "age_bucket": age_bucket,
@@ -191,7 +192,7 @@ class EventEmitter:
             "zone_id": zone_id,
             "dwell_ms": dwell_ms,
             "is_staff": is_staff,
-            "confidence": round(confidence, 3),
+            "confidence": round(float(confidence), 3),
             "metadata": {
                 "queue_depth": queue_depth,
                 "sku_zone": sku_zone or zone_id,
@@ -205,13 +206,24 @@ class EventEmitter:
         self.event_buffer.append(event)
         self.total_emitted += 1
 
-        # Write to JSONL immediately
+        # Write to JSONL immediately (use default= to handle numpy types)
         with open(self.output_file, "a") as f:
-            f.write(json.dumps(event) + "\n")
+            f.write(json.dumps(event, default=self._json_default) + "\n")
 
         # Batch submit to API when buffer is full
         if len(self.event_buffer) >= self.buffer_size:
             self.flush_to_api()
+
+    @staticmethod
+    def _json_default(obj):
+        """Handle numpy types for JSON serialization."""
+        if isinstance(obj, (np.floating,)):
+            return float(obj)
+        if isinstance(obj, (np.integer,)):
+            return int(obj)
+        if isinstance(obj, np.ndarray):
+            return obj.tolist()
+        raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
 
     def flush_to_api(self):
         """Send buffered events to the API."""
