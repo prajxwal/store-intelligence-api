@@ -34,13 +34,16 @@ async def _get_dashboard_data(store_id: str) -> dict:
             row = await cursor.fetchone()
             visitors = row["visitors"] if row else 0
 
-            cursor = await db.execute(
-                """SELECT COUNT(DISTINCT order_time) as purchases
-                   FROM pos_transactions WHERE store_id = ?""",
-                (store_id,),
-            )
-            row = await cursor.fetchone()
-            purchases = row["purchases"] if row else 0
+            # POS purchases — only show if pipeline has produced events
+            purchases = 0
+            if visitors > 0:
+                cursor = await db.execute(
+                    """SELECT COUNT(DISTINCT order_time) as purchases
+                       FROM pos_transactions WHERE store_id = ?""",
+                    (store_id,),
+                )
+                row = await cursor.fetchone()
+                purchases = row["purchases"] if row else 0
 
             conversion = round(purchases / visitors, 4) if visitors > 0 else 0.0
 

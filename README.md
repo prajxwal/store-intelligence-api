@@ -28,8 +28,11 @@ uvicorn app.main:app --reload --port 8000
 # 3. Load POS transaction data
 python -m pipeline.load_pos
 
-# 4. Run detection pipeline on CCTV footage
-python -m pipeline.detect --data-dir ./Dataset --model yolov8m.pt
+# 4. Run detection pipeline (Store 1)
+python -m pipeline.detect --store store1 --model yolov8m.pt
+
+# 5. Run detection pipeline (Store 2)
+python -m pipeline.detect --store store2 --model yolov8m.pt
 ```
 
 ---
@@ -92,41 +95,49 @@ curl http://localhost:8000/stores/ST1008/anomalies?target_date=2026-04-10
 
 ## 🎥 Detection Pipeline
 
-### Camera Setup (Brigade Road Store — ST1008)
+### Camera Setup
 
-The store has 5 CCTV cameras. After visual analysis, 4 are customer-facing:
+**Store 1 — Brigade Bangalore (ST1008)** — 10/04/2026
 
 | Camera | Resolution | FPS | View | Zones Detected |
 |---|---|---|---|---|
-| CAM 1 | 1920×1080 | 30 | Skincare wall (Korean, Face Shop, DermDoc) | `SKINCARE`, `KOREAN_BEAUTY`, `CLEAN_BEAUTY` |
-| CAM 2 | 1920×1080 | 30 | Makeup wall (Lakme, Faces Canada, Maybelline) | `MAKEUP`, `ACCESSORIES`, `FRAGRANCE` |
-| CAM 3 | 1920×1080 | 30 | Store entrance (glass door) | `ENTRY` — Entry/Exit detection |
-| CAM 4 | 1920×1080 | 25 | Back stockroom | *Excluded — not customer-facing* |
-| CAM 5 | 1920×1080 | 25 | Cash counter + Accessories | `BILLING`, `CASH_COUNTER` |
+| CAM 1 | 1920x1080 | 30 | Skincare wall (Korean, Face Shop, DermDoc) | `SKINCARE`, `KOREAN_BEAUTY`, `CLEAN_BEAUTY` |
+| CAM 2 | 1920x1080 | 30 | Makeup wall (Lakme, Faces Canada, Maybelline) | `MAKEUP`, `ACCESSORIES`, `FRAGRANCE` |
+| CAM 3 | 1920x1080 | 30 | Store entrance (glass door) | `ENTRY` -- Entry/Exit detection |
+| CAM 5 | 1920x1080 | 25 | Cash counter + Accessories | `BILLING`, `CASH_COUNTER` |
+
+**Store 2 — Purplle Store 2 (ST2001)** — 08/03/2026 & 29/03/2026
+
+| Camera | Resolution | FPS | View | Zones Detected |
+|---|---|---|---|---|
+| Entry 1 | 960x1080 | 15 | Glass door entrance (top-down) | `ENTRY` -- Entry/Exit detection |
+| Entry 2 | 960x1080 | 15 | Same entrance (different date) | `ENTRY` -- Entry/Exit detection |
+| Zone | 960x1080 | 15 | Narrow aisle (skincare + haircare) | `SKINCARE`, `HAIRCARE` |
+| Billing | 960x1080 | 15 | Cash counter (top-down) | `BILLING`, `CASH_COUNTER`, `MAKEUP` |
 
 ### Pipeline Processing Flow
 
 ```
-Frame → YOLOv8m (person detection)
-      → ByteTrack (persistent ID assignment)
-      → Zone Classification (spatial heuristics from store layout)
-      → Entry/Exit Detection (vertical movement on CAM 3)
-      → Staff Classification (presence >50% OR 3+ zones)
-      → Event Emission (UUID4, ISO-8601 timestamps, JSONL + API)
+Frame -> YOLOv8m (person detection)
+      -> ByteTrack (persistent ID assignment)
+      -> Zone Classification (spatial heuristics from store layout)
+      -> Entry/Exit Detection (vertical movement on entry cameras)
+      -> Staff Classification (presence >50% OR 3+ zones)
+      -> Event Emission (UUID4, ISO-8601 timestamps, JSONL + API)
 ```
 
 ### Event Types
 
 | Type | Trigger | Key Fields |
 |---|---|---|
-| `ENTRY` | Person crosses door threshold inward (CAM 3) | `visitor_id`, `confidence` |
-| `EXIT` | Person crosses door threshold outward (CAM 3) | `visitor_id`, `confidence` |
-| `ZONE_ENTER` | Person enters a product zone | `zone_id` |
-| `ZONE_EXIT` | Person leaves a product zone | `zone_id`, `dwell_ms` |
-| `ZONE_DWELL` | Person stays >30s in same zone | `zone_id`, `dwell_ms` |
-| `BILLING_QUEUE_JOIN` | Person enters billing area | `zone_id`, `queue_depth` |
-| `BILLING_QUEUE_ABANDON` | Person leaves billing without purchase | — |
-| `REENTRY` | Same person re-enters store | `visitor_id` |
+| `entry` | Person crosses door threshold inward | `visitor_id`, `confidence` |
+| `exit` | Person crosses door threshold outward | `visitor_id`, `confidence` |
+| `zone_entered` | Person enters a product zone | `zone_id`, `zone_name`, `zone_type` |
+| `zone_exited` | Person leaves a product zone | `zone_id`, `dwell_ms` |
+| `zone_dwell` | Person stays >30s in same zone | `zone_id`, `dwell_ms` |
+| `queue_completed` | Person completes billing queue | `wait_seconds`, `queue_position_at_join` |
+| `queue_abandoned` | Person leaves billing without purchase | `wait_seconds`, `abandoned` |
+| `reentry` | Same person re-enters store | `visitor_id` |
 
 ### Edge Cases Handled
 
@@ -156,7 +167,7 @@ pytest tests/test_funnel.py -v
 ### Test Results
 
 ```
-45 passed, 0 failed, 81% coverage, 0 warnings
+47 passed, 0 failed, 81% coverage, 0 warnings
 ```
 
 | Test File | Tests | Coverage Area |
@@ -200,7 +211,7 @@ store-intelligence-api/
 │   ├── index.css               # Glassmorphism, gradients, animations
 │   └── index.js                # SSE connection + real-time rendering
 │
-├── tests/                      # Test suite (45 tests, 81% coverage)
+├── tests/                      # Test suite (47 tests, 81% coverage)
 │   ├── conftest.py             # Fixtures — isolated DBs, event factories
 │   ├── test_ingestion.py       # Ingest endpoint tests
 │   ├── test_metrics.py         # Metrics computation tests
@@ -211,7 +222,7 @@ store-intelligence-api/
 │
 ├── docs/
 │   ├── DESIGN.md               # Architecture + 3 AI-assisted decisions
-│   └── CHOICES.md              # 3 technical decisions with options matrix
+│   └── CHOICES.md              # 5 technical decisions with options matrix
 │
 ├── Dockerfile                  # Python 3.11-slim + health check
 ├── docker-compose.yml          # Single-command deploy with volume
@@ -244,7 +255,7 @@ store-intelligence-api/
 
 ## 🔄 Scaling Considerations
 
-The current architecture is designed for a single-store evaluation. For 40+ stores in production:
+The current architecture supports 2 stores (ST1008, ST2001). For 40+ stores in production:
 
 | Component | Current | At Scale |
 |---|---|---|

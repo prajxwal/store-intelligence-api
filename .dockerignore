@@ -6,7 +6,13 @@ build/
 .git/
 .gitignore
 Dataset/
+Store 1/
+Store 2/
 data/
+*.zip
+*.csv
+*.jsonl
+*.xlsx
 tests/
 docs/
 pipeline/

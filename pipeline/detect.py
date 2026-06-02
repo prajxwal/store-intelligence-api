@@ -20,7 +20,7 @@ from ultralytics import YOLO
 from tqdm import tqdm
 
 from pipeline.config import (
-    ACTIVE_CAMERAS, STORE_ID, VIDEO_DIR, OUTPUT_DIR,
+    STORES, ACTIVE_CAMERAS, STORE_ID, VIDEO_DIR, OUTPUT_DIR,
     DETECTION_CONFIDENCE_THRESHOLD, PERSON_CLASS_ID,
     FRAME_SKIP, DWELL_THRESHOLD_MS, DWELL_EMIT_INTERVAL_MS,
     STAFF_PRESENCE_THRESHOLD, STAFF_ZONE_COUNT_THRESHOLD,
@@ -76,12 +76,14 @@ class PersonTrack:
 
 
 def classify_zone_by_camera(camera_id: str, cx: float, cy: float, 
-                             frame_w: int, frame_h: int) -> Optional[str]:
+                             frame_w: int, frame_h: int,
+                             active_cameras: dict = None) -> Optional[str]:
     """
     Classify which zone a person is in based on camera and position.
     Uses spatial heuristics derived from the store layout.
     """
-    cam_config = ACTIVE_CAMERAS.get(camera_id)
+    cams = active_cameras or ACTIVE_CAMERAS
+    cam_config = cams.get(camera_id)
     if not cam_config:
         return None
 
@@ -91,14 +93,22 @@ def classify_zone_by_camera(camera_id: str, cx: float, cy: float,
         return "ENTRY"
 
     elif cam_config.zone_type == "billing":
-        if nx < 0.5:
-            return "CASH_COUNTER"
+        if camera_id.startswith("S2_"):
+            # Store 2: billing_area.mp4 — cash counter is center-top of frame
+            if ny < 0.6:
+                return "CASH_COUNTER"
+            else:
+                return "MAKEUP"
         else:
-            return "ACCESSORIES"
+            # Store 1: CAM 5
+            if nx < 0.5:
+                return "CASH_COUNTER"
+            else:
+                return "ACCESSORIES"
 
     elif cam_config.zone_type == "floor":
         if camera_id == "CAM_01":
-            # Skincare wall — top is Korean/Face Shop, bottom is main floor
+            # Store 1: Skincare wall
             if ny < 0.4:
                 if nx < 0.33:
                     return "KOREAN_BEAUTY"
@@ -110,11 +120,9 @@ def classify_zone_by_camera(camera_id: str, cx: float, cy: float,
                 return "FOH"
 
         elif camera_id == "CAM_02":
-            # Makeup wall
+            # Store 1: Makeup wall
             if ny < 0.5:
-                if nx > 0.7:
-                    return "MAKEUP"
-                elif nx > 0.3:
+                if nx > 0.3:
                     return "MAKEUP"
                 else:
                     return "ACCESSORIES"
@@ -123,6 +131,13 @@ def classify_zone_by_camera(camera_id: str, cx: float, cy: float,
                     return "FRAGRANCE"
                 else:
                     return "MAKEUP"
+
+        elif camera_id == "S2_ZONE":
+            # Store 2: Narrow aisle — left wall vs right wall
+            if nx < 0.5:
+                return "SKINCARE"
+            else:
+                return "HAIRCARE"
 
     return cam_config.zones[0] if cam_config.zones else None
 
@@ -446,19 +461,28 @@ def process_camera(
 
 
 def run_pipeline(
-    data_dir: Optional[str] = None,
+    store_key: str = "store1",
     model_path: str = "yolov8m.pt",
     api_url: str = "http://localhost:8000",
 ):
-    """Run the complete detection pipeline on all cameras."""
-    
-    video_dir = os.path.join(data_dir, "CCTV Footage") if data_dir else VIDEO_DIR
-    
+    """Run the complete detection pipeline on all cameras for a given store."""
+
+    store_cfg = STORES.get(store_key)
+    if not store_cfg:
+        logger.error(f"Unknown store: {store_key}. Available: {list(STORES.keys())}")
+        return {}
+
+    video_dir = store_cfg.video_dir
+    store_id = store_cfg.store_id
+    active_cams = store_cfg.active_cameras
+    start_times = store_cfg.video_start_times
+
     logger.info("=" * 60)
-    logger.info("Store Intelligence — Detection Pipeline")
+    logger.info("Store Intelligence -- Detection Pipeline")
     logger.info("=" * 60)
-    logger.info(f"Store: {STORE_ID}")
+    logger.info(f"Store: {store_id} ({store_cfg.store_name})")
     logger.info(f"Video dir: {video_dir}")
+    logger.info(f"Cameras: {list(active_cams.keys())}")
     logger.info(f"Model: {model_path}")
     logger.info(f"API: {api_url}")
 
@@ -468,24 +492,24 @@ def run_pipeline(
     logger.info(f"Model loaded: {model_path}")
 
     # Initialize emitter
-    emitter = EventEmitter(store_id=STORE_ID)
+    emitter = EventEmitter(store_id=store_id)
 
     # Process each customer-facing camera
     results = {}
     start = time.time()
 
-    for camera_id, cam_config in ACTIVE_CAMERAS.items():
+    for camera_id, cam_config in active_cams.items():
         video_path = os.path.join(video_dir, cam_config.file_name)
-        
+
         if not os.path.exists(video_path):
             logger.warning(f"Video not found: {video_path}")
             continue
 
-        start_time = VIDEO_START_TIMES.get(camera_id, "2026-04-10T20:10:00")
+        start_time = start_times.get(camera_id, store_cfg.store_date + "T12:00:00")
         result = process_camera(model, camera_id, video_path, emitter, start_time)
         results[camera_id] = result
 
-    # Finalize — flush remaining events to API
+    # Finalize -- flush remaining events to API
     emitter.finalize()
 
     elapsed = time.time() - start
@@ -496,7 +520,7 @@ def run_pipeline(
         logger.info(f"  {cam_id}: {res.get('total_tracks', 0)} tracks, "
                     f"{res.get('entry_count', 0)} entries")
     logger.info(f"Output: {emitter.output_file}")
-    logger.info("="  * 60)
+    logger.info("=" * 60)
     logger.info("Tip: Run 'python -m pipeline.load_pos' to load POS data")
 
     return results
@@ -504,8 +528,9 @@ def run_pipeline(
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Store Intelligence Detection Pipeline")
-    parser.add_argument("--data-dir", type=str, default=None,
-                        help="Path to dataset directory")
+    parser.add_argument("--store", type=str, default="store1",
+                        choices=list(STORES.keys()),
+                        help="Store to process (default: store1)")
     parser.add_argument("--model", type=str, default="yolov8m.pt",
                         help="YOLOv8 model path (default: yolov8m.pt)")
     parser.add_argument("--api-url", type=str, default="http://localhost:8000",
@@ -513,7 +538,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     run_pipeline(
-        data_dir=args.data_dir,
+        store_key=args.store,
         model_path=args.model,
         api_url=args.api_url,
     )
