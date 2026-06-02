@@ -41,9 +41,9 @@ class TestMetricsBasic:
     async def test_visitors_counted(self, client):
         """Visitors should be counted from ENTRY events."""
         events = [
-            make_event("ENTRY", visitor_id="VIS_001", timestamp="2026-04-10T18:00:00Z"),
-            make_event("ENTRY", visitor_id="VIS_002", timestamp="2026-04-10T18:01:00Z"),
-            make_event("ENTRY", visitor_id="VIS_003", timestamp="2026-04-10T18:02:00Z"),
+            make_event("entry", visitor_id="VIS_001", timestamp="2026-04-10T18:00:00Z"),
+            make_event("entry", visitor_id="VIS_002", timestamp="2026-04-10T18:01:00Z"),
+            make_event("entry", visitor_id="VIS_003", timestamp="2026-04-10T18:02:00Z"),
         ]
         await client.post("/events/ingest", json={"events": events})
         
@@ -59,9 +59,9 @@ class TestStaffExclusion:
     async def test_staff_excluded_from_visitors(self, client):
         """Staff entries should not count as customer visitors."""
         events = [
-            make_event("ENTRY", visitor_id="VIS_CUST", is_staff=False,
+            make_event("entry", visitor_id="VIS_CUST", is_staff=False,
                        timestamp="2026-04-10T18:00:00Z"),
-            make_event("ENTRY", visitor_id="VIS_STAFF", is_staff=True,
+            make_event("entry", visitor_id="VIS_STAFF", is_staff=True,
                        timestamp="2026-04-10T18:00:30Z"),
         ]
         await client.post("/events/ingest", json={"events": events})
@@ -74,7 +74,7 @@ class TestStaffExclusion:
     async def test_all_staff_clip(self, client):
         """All-staff clip should return 0 customer visitors."""
         events = [
-            make_event("ENTRY", visitor_id=f"STAFF_{i}", is_staff=True,
+            make_event("entry", visitor_id=f"STAFF_{i}", is_staff=True,
                        timestamp="2026-04-10T18:00:00Z")
             for i in range(5)
         ]
@@ -93,7 +93,7 @@ class TestZeroPurchases:
     async def test_zero_purchases_conversion_zero(self, client):
         """Zero purchases → conversion_rate = 0.0, not null or error."""
         events = [
-            make_event("ENTRY", visitor_id="VIS_001", timestamp="2026-04-10T18:00:00Z"),
+            make_event("entry", visitor_id="VIS_001", timestamp="2026-04-10T18:00:00Z"),
         ]
         await client.post("/events/ingest", json={"events": events})
         

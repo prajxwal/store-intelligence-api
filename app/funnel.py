@@ -47,7 +47,7 @@ async def get_funnel(store_id: str, target_date: str | None = None):
                FROM events
                WHERE store_id = ?
                  AND is_staff = 0
-                 AND event_type IN ('ENTRY', 'REENTRY')
+                 AND event_type IN ('entry', 'reentry')
                  AND DATE(timestamp) = ?""",
             (store_id, today),
         )
@@ -60,9 +60,9 @@ async def get_funnel(store_id: str, target_date: str | None = None):
                FROM events
                WHERE store_id = ?
                  AND is_staff = 0
-                 AND event_type IN ('ZONE_ENTER', 'ZONE_DWELL')
+                 AND event_type IN ('zone_entered', 'zone_dwell')
                  AND zone_id IS NOT NULL
-                 AND zone_id NOT IN ('BILLING', 'CASH_COUNTER', 'BILLING_AREA', 'ENTRY')
+                 AND (zone_type IS NULL OR zone_type NOT IN ('BILLING', 'ENTRY'))
                  AND DATE(timestamp) = ?""",
             (store_id, today),
         )
@@ -75,8 +75,8 @@ async def get_funnel(store_id: str, target_date: str | None = None):
                FROM events
                WHERE store_id = ?
                  AND is_staff = 0
-                 AND (event_type IN ('BILLING_QUEUE_JOIN', 'ZONE_ENTER')
-                      AND zone_id IN ('BILLING', 'CASH_COUNTER', 'BILLING_AREA'))
+                 AND event_type IN ('zone_entered', 'queue_completed', 'queue_abandoned')
+                 AND zone_type = 'BILLING'
                  AND DATE(timestamp) = ?""",
             (store_id, today),
         )
@@ -90,7 +90,7 @@ async def get_funnel(store_id: str, target_date: str | None = None):
                JOIN pos_transactions p ON e.store_id = p.store_id
                WHERE e.store_id = ?
                  AND e.is_staff = 0
-                 AND e.zone_id IN ('BILLING', 'CASH_COUNTER', 'BILLING_AREA')
+                 AND e.zone_type = 'BILLING'
                  AND DATE(e.timestamp) = ?
                  AND ABS(JULIANDAY(e.timestamp) - JULIANDAY(p.timestamp)) * 24 * 60 <= 5""",
             (store_id, today),
@@ -101,7 +101,7 @@ async def get_funnel(store_id: str, target_date: str | None = None):
         # If no direct correlation, fall back to POS transaction count as a proxy
         if purchase_count == 0 and billing_count > 0:
             cursor = await db.execute(
-                """SELECT COUNT(DISTINCT transaction_id) as cnt
+                """SELECT COUNT(DISTINCT order_time) as cnt
                    FROM pos_transactions
                    WHERE store_id = ?
                      AND DATE(timestamp) = ?""",

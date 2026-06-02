@@ -40,27 +40,27 @@ async def get_anomalies(store_id: str, target_date: str | None = None):
         anomalies: list[Anomaly] = []
 
         # ── 1. BILLING_QUEUE_SPIKE ──────────────────────────────────────
-        # Get current queue depth
+        # Get current queue position
         cursor = await db.execute(
-            """SELECT queue_depth
+            """SELECT queue_position_at_join
                FROM events
                WHERE store_id = ?
-                 AND event_type = 'BILLING_QUEUE_JOIN'
+                 AND event_type IN ('queue_completed', 'queue_abandoned')
                  AND DATE(timestamp) = ?
                ORDER BY timestamp DESC
                LIMIT 1""",
             (store_id, today),
         )
         row = await cursor.fetchone()
-        current_queue = row["queue_depth"] if row and row["queue_depth"] else 0
+        current_queue = row["queue_position_at_join"] if row and row["queue_position_at_join"] else 0
 
-        # Get average queue depth for the day
+        # Get average queue position for the day
         cursor = await db.execute(
-            """SELECT AVG(queue_depth) as avg_depth
+            """SELECT AVG(queue_position_at_join) as avg_depth
                FROM events
                WHERE store_id = ?
-                 AND event_type = 'BILLING_QUEUE_JOIN'
-                 AND queue_depth IS NOT NULL
+                 AND event_type IN ('queue_completed', 'queue_abandoned')
+                 AND queue_position_at_join IS NOT NULL
                  AND DATE(timestamp) = ?""",
             (store_id, today),
         )
@@ -84,7 +84,7 @@ async def get_anomalies(store_id: str, target_date: str | None = None):
                FROM events
                WHERE store_id = ?
                  AND is_staff = 0
-                 AND event_type = 'ENTRY'
+                 AND event_type = 'entry'
                  AND DATE(timestamp) = ?""",
             (store_id, today),
         )
@@ -92,7 +92,7 @@ async def get_anomalies(store_id: str, target_date: str | None = None):
         today_visitors = row["visitors"] if row else 0
 
         cursor = await db.execute(
-            """SELECT COUNT(DISTINCT transaction_id) as purchases
+            """SELECT COUNT(DISTINCT order_time) as purchases
                FROM pos_transactions
                WHERE store_id = ?
                  AND DATE(timestamp) = ?""",
@@ -111,7 +111,7 @@ async def get_anomalies(store_id: str, target_date: str | None = None):
                FROM events
                WHERE store_id = ?
                  AND is_staff = 0
-                 AND event_type = 'ENTRY'
+                 AND event_type = 'entry'
                  AND DATE(timestamp) BETWEEN ? AND ?
                GROUP BY DATE(timestamp)""",
             (store_id, seven_days_ago, today),
@@ -120,7 +120,7 @@ async def get_anomalies(store_id: str, target_date: str | None = None):
 
         cursor = await db.execute(
             """SELECT DATE(timestamp) as day,
-                      COUNT(DISTINCT transaction_id) as purchases
+                      COUNT(DISTINCT order_time) as purchases
                FROM pos_transactions
                WHERE store_id = ?
                  AND DATE(timestamp) BETWEEN ? AND ?

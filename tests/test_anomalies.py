@@ -3,9 +3,9 @@
 # Test when no anomalies exist, severity levels, and suggested_action presence."
 #
 # CHANGES MADE:
+# - Updated to use lowercase event types matching Purplle's sample schema
+# - Uses queue_completed/queue_abandoned with queue_position_at_join instead of queue_depth
 # - Added test verifying suggested_action string is non-empty
-# - Added test for no anomalies in normal operation
-# - Simplified queue spike test with deterministic queue_depth values
 
 """Tests for GET /stores/{id}/anomalies endpoint."""
 
@@ -40,26 +40,29 @@ class TestQueueSpike:
 
     @pytest.mark.asyncio
     async def test_queue_spike_detection(self, client):
-        """High queue depth should trigger BILLING_QUEUE_SPIKE."""
+        """High queue position should trigger BILLING_QUEUE_SPIKE."""
         events = [
             # Normal queue events
-            make_event("BILLING_QUEUE_JOIN", visitor_id="VIS_001", 
-                       zone_id="BILLING", queue_depth=1,
+            make_event("queue_completed", visitor_id="VIS_001",
+                       zone_id="BILLING", zone_type="BILLING",
+                       queue_position_at_join=1, wait_seconds=8, abandoned=False,
                        timestamp="2026-04-10T18:00:00Z"),
-            make_event("BILLING_QUEUE_JOIN", visitor_id="VIS_002",
-                       zone_id="BILLING", queue_depth=2,
+            make_event("queue_completed", visitor_id="VIS_002",
+                       zone_id="BILLING", zone_type="BILLING",
+                       queue_position_at_join=2, wait_seconds=12, abandoned=False,
                        timestamp="2026-04-10T18:01:00Z"),
             # Spike!
-            make_event("BILLING_QUEUE_JOIN", visitor_id="VIS_003",
-                       zone_id="BILLING", queue_depth=8,
+            make_event("queue_completed", visitor_id="VIS_003",
+                       zone_id="BILLING", zone_type="BILLING",
+                       queue_position_at_join=8, wait_seconds=45, abandoned=False,
                        timestamp="2026-04-10T18:05:00Z"),
         ]
         await client.post("/events/ingest", json={"events": events})
-        
+
         response = await client.get("/stores/ST1008/anomalies?target_date=2026-04-10")
         data = response.json()
-        
-        queue_anomalies = [a for a in data["anomalies"] 
+
+        queue_anomalies = [a for a in data["anomalies"]
                            if a["anomaly_type"] == "BILLING_QUEUE_SPIKE"]
         assert len(queue_anomalies) >= 1
         assert queue_anomalies[0]["suggested_action"]  # Non-empty
@@ -72,18 +75,20 @@ class TestDeadZone:
     async def test_anomaly_has_suggested_action(self, client):
         """Every anomaly should include a suggested_action string."""
         events = [
-            make_event("BILLING_QUEUE_JOIN", visitor_id="VIS_001",
-                       zone_id="BILLING", queue_depth=1,
+            make_event("queue_completed", visitor_id="VIS_001",
+                       zone_id="BILLING", zone_type="BILLING",
+                       queue_position_at_join=1, wait_seconds=5, abandoned=False,
                        timestamp="2026-04-10T18:00:00Z"),
-            make_event("BILLING_QUEUE_JOIN", visitor_id="VIS_002",
-                       zone_id="BILLING", queue_depth=10,
+            make_event("queue_completed", visitor_id="VIS_002",
+                       zone_id="BILLING", zone_type="BILLING",
+                       queue_position_at_join=10, wait_seconds=60, abandoned=False,
                        timestamp="2026-04-10T18:05:00Z"),
         ]
         await client.post("/events/ingest", json={"events": events})
-        
+
         response = await client.get("/stores/ST1008/anomalies?target_date=2026-04-10")
         data = response.json()
-        
+
         for anomaly in data["anomalies"]:
             assert "suggested_action" in anomaly
             assert len(anomaly["suggested_action"]) > 0

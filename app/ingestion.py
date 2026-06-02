@@ -1,7 +1,7 @@
 """
 POST /events/ingest — Event ingestion endpoint.
+Accepts Purplle's sample event schema with flexible field names.
 Validates, deduplicates, and stores events in batches.
-Idempotent by event_id. Supports partial success.
 """
 
 from __future__ import annotations
@@ -19,33 +19,55 @@ router = APIRouter()
 
 
 async def _insert_event(db, event: EventIngest) -> bool:
-    """Insert a single event. Returns True if inserted, False if duplicate."""
+    """Insert a single event with all enriched fields."""
     try:
+        eid = event.get_effective_id()
+        sid = event.get_effective_store()
+        vid = event.get_effective_visitor()
+        ts = event.get_effective_timestamp()
+
         await db.execute(
-            """INSERT OR IGNORE INTO events 
-               (event_id, store_id, camera_id, visitor_id, event_type, 
-                timestamp, zone_id, dwell_ms, is_staff, confidence,
+            """INSERT OR IGNORE INTO events
+               (event_id, store_id, camera_id, visitor_id, track_id,
+                event_type, timestamp,
+                zone_id, zone_name, zone_type, is_revenue_zone,
+                zone_hotspot_x, zone_hotspot_y,
+                dwell_ms, is_staff, confidence,
+                gender_pred, age_pred, age_bucket, is_face_hidden,
+                group_id, group_size,
+                queue_join_ts, queue_served_ts, queue_exit_ts,
+                wait_seconds, queue_position_at_join, abandoned,
                 queue_depth, sku_zone, session_seq)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               VALUES (?, ?, ?, ?, ?,
+                       ?, ?,
+                       ?, ?, ?, ?,
+                       ?, ?,
+                       ?, ?, ?,
+                       ?, ?, ?, ?,
+                       ?, ?,
+                       ?, ?, ?,
+                       ?, ?, ?,
+                       ?, ?, ?)""",
             (
-                event.event_id,
-                event.store_id,
-                event.camera_id,
-                event.visitor_id,
-                event.event_type.value,
-                event.timestamp.isoformat(),
-                event.zone_id,
-                event.dwell_ms,
-                1 if event.is_staff else 0,
-                event.confidence,
-                event.metadata.queue_depth,
-                event.metadata.sku_zone,
-                event.metadata.session_seq,
+                eid, sid, event.camera_id, vid, event.track_id,
+                event.event_type.value, ts,
+                event.zone_id, event.zone_name, event.zone_type, event.is_revenue_zone,
+                event.zone_hotspot_x, event.zone_hotspot_y,
+                event.dwell_ms, 1 if event.is_staff else 0, event.confidence,
+                event.gender_pred, event.age_pred, event.age_bucket,
+                1 if event.is_face_hidden else (0 if event.is_face_hidden is not None else None),
+                event.group_id, event.group_size,
+                event.queue_join_ts, event.queue_served_ts, event.queue_exit_ts,
+                event.wait_seconds, event.queue_position_at_join,
+                1 if event.abandoned else (0 if event.abandoned is not None else None),
+                event.metadata.queue_depth if event.metadata else None,
+                event.metadata.sku_zone if event.metadata else None,
+                event.metadata.session_seq if event.metadata else None,
             ),
         )
         return db.total_changes > 0
     except Exception as e:
-        logger.error(f"Failed to insert event {event.event_id}: {e}")
+        logger.error(f"Failed to insert event {event.get_effective_id()}: {e}")
         raise
 
 
@@ -53,10 +75,8 @@ async def _insert_event(db, event: EventIngest) -> bool:
 async def ingest_events(batch: EventBatch):
     """
     Ingest a batch of up to 500 events.
-    
-    - Validates each event against the schema
-    - Deduplicates by event_id (idempotent)
-    - Returns partial success on malformed events
+    Accepts Purplle's sample schema with flexible field names.
+    Deduplicates by event_id (idempotent). Returns partial success.
     """
     if len(batch.events) == 0:
         return IngestResponse(accepted=0, rejected=0, errors=[])
@@ -82,7 +102,7 @@ async def ingest_events(batch: EventBatch):
                 rejected += 1
                 errors.append(EventError(
                     index=idx,
-                    event_id=event.event_id,
+                    event_id=event.get_effective_id(),
                     error=str(e),
                 ))
 
@@ -128,7 +148,7 @@ async def ingest_raw_events(events: list[dict[str, Any]]):
                 rejected += 1
                 errors.append(EventError(
                     index=idx,
-                    event_id=raw_event.get("event_id"),
+                    event_id=raw_event.get("event_id") or raw_event.get("queue_event_id"),
                     error=str(e),
                 ))
 

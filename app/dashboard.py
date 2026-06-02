@@ -28,14 +28,14 @@ async def _get_dashboard_data(store_id: str) -> dict:
             cursor = await db.execute(
                 """SELECT COUNT(DISTINCT visitor_id) as visitors
                    FROM events
-                   WHERE store_id = ? AND is_staff = 0 AND event_type = 'ENTRY'""",
+                   WHERE store_id = ? AND is_staff = 0 AND event_type = 'entry'""",
                 (store_id,),
             )
             row = await cursor.fetchone()
             visitors = row["visitors"] if row else 0
 
             cursor = await db.execute(
-                """SELECT COUNT(DISTINCT transaction_id) as purchases
+                """SELECT COUNT(DISTINCT order_time) as purchases
                    FROM pos_transactions WHERE store_id = ?""",
                 (store_id,),
             )
@@ -82,6 +82,37 @@ async def _get_dashboard_data(store_id: str) -> dict:
                 for r in await cursor.fetchall()
             ]
 
+            # Gender split
+            cursor = await db.execute(
+                """SELECT gender_pred, COUNT(DISTINCT visitor_id) as cnt
+                   FROM events
+                   WHERE store_id = ? AND event_type = 'entry' AND is_staff = 0
+                   GROUP BY gender_pred""",
+                (store_id,),
+            )
+            gender = {"male": 0, "female": 0, "unknown": 0}
+            for r in await cursor.fetchall():
+                g = r["gender_pred"]
+                if g == "M":
+                    gender["male"] = r["cnt"]
+                elif g == "F":
+                    gender["female"] = r["cnt"]
+                else:
+                    gender["unknown"] = r["cnt"]
+
+            # Top brands
+            cursor = await db.execute(
+                """SELECT brand_name, SUM(total_amount) as revenue
+                   FROM pos_transactions
+                   WHERE store_id = ? AND brand_name IS NOT NULL AND brand_name != ''
+                   GROUP BY brand_name ORDER BY revenue DESC LIMIT 5""",
+                (store_id,),
+            )
+            top_brands = [
+                {"brand": r["brand_name"], "revenue": round(r["revenue"], 2)}
+                for r in await cursor.fetchall()
+            ]
+
             return {
                 "store_id": store_id,
                 "unique_visitors": visitors,
@@ -90,6 +121,8 @@ async def _get_dashboard_data(store_id: str) -> dict:
                 "total_events": total_events,
                 "zones": zones,
                 "recent_events": recent,
+                "gender_split": gender,
+                "top_brands": top_brands,
             }
         finally:
             await db.close()

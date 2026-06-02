@@ -37,14 +37,14 @@ async def get_heatmap(store_id: str, target_date: str | None = None):
 
         # Get zone-level aggregations
         cursor = await db.execute(
-            """SELECT zone_id,
+            """SELECT zone_id, zone_name, zone_type,
                       COUNT(DISTINCT visitor_id) as visit_count,
                       AVG(dwell_ms) as avg_dwell_ms
                FROM events
                WHERE store_id = ?
                  AND is_staff = 0
                  AND zone_id IS NOT NULL
-                 AND event_type IN ('ZONE_ENTER', 'ZONE_DWELL', 'ZONE_EXIT')
+                 AND event_type IN ('zone_entered', 'zone_dwell', 'zone_exited')
                  AND DATE(timestamp) = ?
                GROUP BY zone_id
                ORDER BY visit_count DESC""",
@@ -68,7 +68,7 @@ async def get_heatmap(store_id: str, target_date: str | None = None):
                FROM events
                WHERE store_id = ?
                  AND is_staff = 0
-                 AND event_type = 'ENTRY'
+                 AND event_type = 'entry'
                  AND DATE(timestamp) = ?""",
             (store_id, today),
         )
@@ -80,6 +80,8 @@ async def get_heatmap(store_id: str, target_date: str | None = None):
         zones = [
             ZoneHeat(
                 zone_id=r["zone_id"],
+                zone_name=r["zone_name"],
+                zone_type=r["zone_type"],
                 visit_count=r["visit_count"],
                 avg_dwell_ms=round(r["avg_dwell_ms"] or 0, 1),
                 normalised_score=round((r["visit_count"] / max_visits) * 100, 1) if max_visits > 0 else 0,

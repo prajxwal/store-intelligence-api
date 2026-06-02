@@ -3,10 +3,9 @@
 # uniqueness, timestamp ordering, staff flag presence, and event type coverage."
 #
 # CHANGES MADE:
-# - Tests work without requiring actual video files or YOLO model
-# - Focus on the EventEmitter and event schema validation
-# - Added tests for session sequence tracking
-# - Added test for all required event types
+# - Updated to lowercase event types matching Purplle's sample schema
+# - Tests new entry/exit, zone, and queue event creators
+# - Added test for visitor ID format (ID_60001)
 
 """Tests for the detection pipeline event emission and schema compliance."""
 
@@ -20,7 +19,7 @@ from app.models import EventIngest, EventType
 
 
 class TestEventSchema:
-    """Test that emitted events conform to the PRD schema."""
+    """Test that emitted events conform to the Purplle schema."""
 
     def test_create_event_has_required_fields(self):
         """Every event must have all required fields."""
@@ -28,7 +27,7 @@ class TestEventSchema:
         event = emitter.create_event(
             camera_id="CAM_03",
             visitor_id="VIS_0001",
-            event_type="ENTRY",
+            event_type="entry",
             timestamp=datetime(2026, 4, 10, 18, 0, 0),
             confidence=0.85,
         )
@@ -47,7 +46,7 @@ class TestEventSchema:
         event = emitter.create_event(
             camera_id="CAM_03",
             visitor_id="VIS_0001",
-            event_type="ENTRY",
+            event_type="entry",
             timestamp=datetime(2026, 4, 10, 18, 0, 0),
             confidence=0.85,
         )
@@ -65,7 +64,7 @@ class TestEventSchema:
             event = emitter.create_event(
                 camera_id="CAM_03",
                 visitor_id=f"VIS_{i:04d}",
-                event_type="ENTRY",
+                event_type="entry",
                 timestamp=base_time + timedelta(seconds=i),
                 confidence=0.85,
             )
@@ -78,7 +77,7 @@ class TestEventSchema:
         event = emitter.create_event(
             camera_id="CAM_03",
             visitor_id="VIS_0001",
-            event_type="ENTRY",
+            event_type="entry",
             timestamp=datetime(2026, 4, 10, 18, 30, 45),
             confidence=0.85,
         )
@@ -93,21 +92,21 @@ class TestEventSchema:
         event = emitter.create_event(
             camera_id="CAM_03",
             visitor_id="VIS_0001",
-            event_type="ENTRY",
+            event_type="entry",
             timestamp=datetime(2026, 4, 10, 18, 0, 0),
             confidence=0.85,
         )
         # Should not raise
         validated = EventIngest(**event)
-        assert validated.event_type == EventType.ENTRY
+        assert validated.event_type == EventType.entry
 
     def test_zone_dwell_event_has_dwell_ms(self):
-        """ZONE_DWELL events must include dwell_ms > 0."""
+        """zone_dwell events must include dwell_ms > 0."""
         emitter = EventEmitter(store_id="ST1008", output_dir="./test_output")
         event = emitter.create_event(
             camera_id="CAM_01",
             visitor_id="VIS_0001",
-            event_type="ZONE_DWELL",
+            event_type="zone_dwell",
             timestamp=datetime(2026, 4, 10, 18, 1, 0),
             zone_id="SKINCARE",
             dwell_ms=45000,
@@ -125,10 +124,10 @@ class TestSessionSequence:
         emitter = EventEmitter(store_id="ST1008", output_dir="./test_output")
         vid = "VIS_0001"
 
-        e1 = emitter.create_event("CAM_03", vid, "ENTRY", datetime.now(), confidence=0.9)
-        e2 = emitter.create_event("CAM_01", vid, "ZONE_ENTER", datetime.now(),
+        e1 = emitter.create_event("CAM_03", vid, "entry", datetime.now(), confidence=0.9)
+        e2 = emitter.create_event("CAM_01", vid, "zone_entered", datetime.now(),
                                   zone_id="SKINCARE", confidence=0.85)
-        e3 = emitter.create_event("CAM_03", vid, "EXIT", datetime.now(), confidence=0.88)
+        e3 = emitter.create_event("CAM_03", vid, "exit", datetime.now(), confidence=0.88)
 
         assert e1["metadata"]["session_seq"] == 1
         assert e2["metadata"]["session_seq"] == 2
@@ -138,9 +137,9 @@ class TestSessionSequence:
         """Different visitors should have independent session sequences."""
         emitter = EventEmitter(store_id="ST1008", output_dir="./test_output")
 
-        e1 = emitter.create_event("CAM_03", "VIS_A", "ENTRY", datetime.now(), confidence=0.9)
-        e2 = emitter.create_event("CAM_03", "VIS_B", "ENTRY", datetime.now(), confidence=0.9)
-        e3 = emitter.create_event("CAM_01", "VIS_A", "ZONE_ENTER", datetime.now(),
+        e1 = emitter.create_event("CAM_03", "VIS_A", "entry", datetime.now(), confidence=0.9)
+        e2 = emitter.create_event("CAM_03", "VIS_B", "entry", datetime.now(), confidence=0.9)
+        e3 = emitter.create_event("CAM_01", "VIS_A", "zone_entered", datetime.now(),
                                   zone_id="SKINCARE", confidence=0.85)
 
         assert e1["metadata"]["session_seq"] == 1
@@ -152,12 +151,12 @@ class TestEventTypes:
     """Test that all required event types can be created."""
 
     def test_all_event_types_valid(self):
-        """All PRD event types should create valid events."""
+        """All event types should create valid events."""
         emitter = EventEmitter(store_id="ST1008", output_dir="./test_output")
         event_types = [
-            "ENTRY", "EXIT", "ZONE_ENTER", "ZONE_EXIT",
-            "ZONE_DWELL", "BILLING_QUEUE_JOIN",
-            "BILLING_QUEUE_ABANDON", "REENTRY",
+            "entry", "exit", "zone_entered", "zone_exited",
+            "zone_dwell", "queue_completed",
+            "queue_abandoned", "reentry",
         ]
         for et in event_types:
             event = emitter.create_event(
@@ -166,21 +165,65 @@ class TestEventTypes:
                 event_type=et,
                 timestamp=datetime.now(),
                 confidence=0.8,
-                zone_id="SKINCARE" if "ZONE" in et or "BILLING" in et else None,
+                zone_id="SKINCARE" if "zone" in et or "queue" in et else None,
             )
             validated = EventIngest(**event)
             assert validated.event_type.value == et
 
-    def test_billing_queue_join_has_queue_depth(self):
-        """BILLING_QUEUE_JOIN must include queue_depth in metadata."""
+    def test_queue_completed_event(self):
+        """queue_completed event should include queue timing fields."""
         emitter = EventEmitter(store_id="ST1008", output_dir="./test_output")
-        event = emitter.create_event(
+        join_ts = datetime(2026, 4, 10, 18, 13, 5)
+        exit_ts = datetime(2026, 4, 10, 18, 15, 31)
+        event = emitter.create_queue_event(
             camera_id="CAM_05",
-            visitor_id="VIS_0001",
-            event_type="BILLING_QUEUE_JOIN",
-            timestamp=datetime.now(),
-            zone_id="BILLING",
-            confidence=0.88,
-            queue_depth=3,
+            track_id=102,
+            event_type="queue_completed",
+            zone="BILLING",
+            queue_join_ts=join_ts,
+            queue_exit_ts=exit_ts,
+            queue_served_ts=datetime(2026, 4, 10, 18, 13, 13),
+            wait_seconds=8,
+            queue_position_at_join=2,
+            abandoned=False,
         )
-        assert event["metadata"]["queue_depth"] == 3
+        assert event["event_type"] == "queue_completed"
+        assert event["wait_seconds"] == 8
+        assert event["abandoned"] is False
+        assert event["queue_position_at_join"] == 2
+
+
+class TestEntryExitEvents:
+    """Test the Purplle-format entry/exit event creator."""
+
+    def test_entry_event_format(self):
+        """Entry events should use id_token and store_code format."""
+        emitter = EventEmitter(store_id="ST1008", output_dir="./test_output")
+        vid = emitter.next_visitor_id()
+        event = emitter.create_entry_exit_event(
+            camera_id="CAM_03",
+            visitor_id=vid,
+            event_type="entry",
+            timestamp=datetime(2026, 4, 10, 18, 10, 5),
+        )
+        assert event["event_type"] == "entry"
+        assert event["id_token"] == vid
+        assert "store_code" in event
+        assert vid.startswith("ID_")
+
+    def test_zone_event_has_metadata(self):
+        """Zone events should include zone_name, zone_type, is_revenue_zone."""
+        emitter = EventEmitter(store_id="ST1008", output_dir="./test_output")
+        event = emitter.create_zone_event(
+            camera_id="CAM_01",
+            track_id=101,
+            event_type="zone_entered",
+            timestamp=datetime(2026, 4, 10, 18, 10, 45),
+            zone="SKINCARE",
+            hotspot_x=412.6,
+            hotspot_y=238.4,
+        )
+        assert event["zone_name"] is not None
+        assert event["zone_type"] == "SHELF"
+        assert event["is_revenue_zone"] == "Yes"
+        assert event["zone_hotspot_x"] == 412.6

@@ -1,6 +1,6 @@
 """
 Database layer — SQLite with WAL mode via aiosqlite.
-Handles schema creation, connection management, and health checks.
+Schema aligned with Purplle's expected event format.
 """
 
 from __future__ import annotations
@@ -25,7 +25,7 @@ async def get_db() -> aiosqlite.Connection:
 
 
 async def init_db():
-    """Initialize database schema."""
+    """Initialize database schema — aligned with Purplle sample schemas."""
     db = await get_db()
     try:
         await db.executescript("""
@@ -34,15 +34,49 @@ async def init_db():
                 store_id TEXT NOT NULL,
                 camera_id TEXT NOT NULL,
                 visitor_id TEXT NOT NULL,
+                track_id INTEGER,
                 event_type TEXT NOT NULL,
                 timestamp TEXT NOT NULL,
+
+                -- Zone fields
                 zone_id TEXT,
+                zone_name TEXT,
+                zone_type TEXT,
+                is_revenue_zone TEXT,
+                zone_hotspot_x REAL,
+                zone_hotspot_y REAL,
+
+                -- Duration
                 dwell_ms INTEGER DEFAULT 0,
+
+                -- Staff flag
                 is_staff INTEGER DEFAULT 0,
-                confidence REAL NOT NULL,
+
+                -- Detection
+                confidence REAL DEFAULT 0.5,
+
+                -- Demographics
+                gender_pred TEXT,
+                age_pred INTEGER,
+                age_bucket TEXT,
+                is_face_hidden INTEGER,
+                group_id TEXT,
+                group_size INTEGER,
+
+                -- Queue timing
+                queue_join_ts TEXT,
+                queue_served_ts TEXT,
+                queue_exit_ts TEXT,
+                wait_seconds INTEGER,
+                queue_position_at_join INTEGER,
+                abandoned INTEGER,
+
+                -- Legacy metadata
                 queue_depth INTEGER,
                 sku_zone TEXT,
                 session_seq INTEGER,
+
+                -- System
                 ingested_at TEXT DEFAULT (datetime('now'))
             );
 
@@ -53,19 +87,25 @@ async def init_db():
             CREATE INDEX IF NOT EXISTS idx_events_store_type ON events(store_id, event_type);
             CREATE INDEX IF NOT EXISTS idx_events_store_visitor ON events(store_id, visitor_id);
             CREATE INDEX IF NOT EXISTS idx_events_zone ON events(store_id, zone_id);
+            CREATE INDEX IF NOT EXISTS idx_events_gender ON events(store_id, gender_pred);
 
             CREATE TABLE IF NOT EXISTS pos_transactions (
-                transaction_id TEXT PRIMARY KEY,
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                order_id TEXT,
                 store_id TEXT NOT NULL,
                 timestamp TEXT NOT NULL,
                 order_date TEXT,
                 order_time TEXT,
-                customer_name TEXT,
-                basket_value REAL DEFAULT 0.0
+                product_id TEXT,
+                brand_name TEXT,
+                total_amount REAL DEFAULT 0.0,
+                customer_name TEXT
             );
 
             CREATE INDEX IF NOT EXISTS idx_pos_store ON pos_transactions(store_id);
             CREATE INDEX IF NOT EXISTS idx_pos_timestamp ON pos_transactions(timestamp);
+            CREATE INDEX IF NOT EXISTS idx_pos_brand ON pos_transactions(brand_name);
+            CREATE INDEX IF NOT EXISTS idx_pos_order ON pos_transactions(order_id, order_time);
         """)
         await db.commit()
         logger.info("Database schema initialized successfully")

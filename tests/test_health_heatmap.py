@@ -75,13 +75,15 @@ class TestHeatmap:
         events = []
         # SKINCARE gets 5 visits
         for i in range(5):
-            events.append(make_event("ZONE_ENTER", visitor_id=f"VIS_{i}",
-                                     zone_id="SKINCARE",
+            events.append(make_event("zone_entered", visitor_id=f"VIS_{i}",
+                                     zone_id="SKINCARE", zone_type="SHELF",
+                                     zone_name="Skincare Wall",
                                      timestamp="2026-04-10T18:00:00Z"))
         # MAKEUP gets 2 visits
         for i in range(2):
-            events.append(make_event("ZONE_ENTER", visitor_id=f"VIS_M{i}",
-                                     zone_id="MAKEUP",
+            events.append(make_event("zone_entered", visitor_id=f"VIS_M{i}",
+                                     zone_id="MAKEUP", zone_type="SHELF",
+                                     zone_name="Makeup Counter",
                                      timestamp="2026-04-10T18:00:00Z"))
         
         await client.post("/events/ingest", json={"events": events})
@@ -97,7 +99,7 @@ class TestHeatmap:
     async def test_low_confidence_flag(self, client):
         """Fewer than 20 sessions should flag data_confidence as low."""
         events = [
-            make_event("ENTRY", visitor_id=f"VIS_{i}",
+            make_event("entry", visitor_id=f"VIS_{i}",
                        timestamp="2026-04-10T18:00:00Z")
             for i in range(5)
         ]

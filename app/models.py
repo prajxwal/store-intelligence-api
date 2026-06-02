@@ -1,6 +1,6 @@
 """
 Pydantic models for the Store Intelligence API.
-Defines event schemas, API request/response models, and enums.
+Aligned with Purplle's expected event schema (sample_events.jsonl).
 """
 
 from __future__ import annotations
@@ -16,14 +16,15 @@ from pydantic import BaseModel, Field, field_validator
 # ─── Enums ────────────────────────────────────────────────────────────────────
 
 class EventType(str, Enum):
-    ENTRY = "ENTRY"
-    EXIT = "EXIT"
-    ZONE_ENTER = "ZONE_ENTER"
-    ZONE_EXIT = "ZONE_EXIT"
-    ZONE_DWELL = "ZONE_DWELL"
-    BILLING_QUEUE_JOIN = "BILLING_QUEUE_JOIN"
-    BILLING_QUEUE_ABANDON = "BILLING_QUEUE_ABANDON"
-    REENTRY = "REENTRY"
+    """Event types matching Purplle's sample_events schema (lowercase)."""
+    entry = "entry"
+    exit = "exit"
+    zone_entered = "zone_entered"
+    zone_exited = "zone_exited"
+    zone_dwell = "zone_dwell"
+    queue_completed = "queue_completed"
+    queue_abandoned = "queue_abandoned"
+    reentry = "reentry"
 
 
 class Severity(str, Enum):
@@ -47,27 +48,91 @@ class EventMetadata(BaseModel):
 
 
 class EventIngest(BaseModel):
-    """Single event conforming to the PRD event schema."""
-    event_id: str = Field(..., description="UUID v4 — must be globally unique")
-    store_id: str = Field(..., description="Store identifier from store_layout")
+    """Single event conforming to the Purplle event schema."""
+    # Core identifiers
+    event_id: Optional[str] = Field(None, description="UUID v4 — globally unique (alias: queue_event_id)")
+    queue_event_id: Optional[str] = Field(None, description="UUID for queue events")
+    store_id: Optional[str] = Field(None, description="Store identifier")
+    store_code: Optional[str] = Field(None, description="Store code (entry/exit events)")
     camera_id: str = Field(..., description="Camera that produced this event")
-    visitor_id: str = Field(..., description="Re-ID token — unique per visit session")
-    event_type: EventType = Field(..., description="Type of behavioural event")
-    timestamp: datetime = Field(..., description="ISO-8601 UTC timestamp")
-    zone_id: Optional[str] = Field(None, description="Zone name; null for ENTRY/EXIT")
-    dwell_ms: int = Field(0, ge=0, description="Duration in ms; 0 for instantaneous")
-    is_staff: bool = Field(False, description="Whether this person is store staff")
-    confidence: float = Field(..., ge=0.0, le=1.0, description="Detection confidence")
-    metadata: EventMetadata = Field(default_factory=EventMetadata)
 
-    @field_validator("event_id")
+    # Visitor tracking
+    visitor_id: Optional[str] = Field(None, description="Re-ID token (alias: id_token)")
+    id_token: Optional[str] = Field(None, description="Visitor ID for entry/exit events")
+    track_id: Optional[int] = Field(None, description="ByteTrack tracker ID")
+
+    # Event data
+    event_type: EventType = Field(..., description="Type of behavioural event")
+    timestamp: Optional[datetime] = Field(None, description="ISO-8601 timestamp")
+    event_timestamp: Optional[str] = Field(None, description="Timestamp for entry/exit events")
+    event_time: Optional[str] = Field(None, description="Timestamp for zone events")
+
+    # Zone fields
+    zone_id: Optional[str] = Field(None, description="Zone identifier")
+    zone_name: Optional[str] = Field(None, description="Human-readable zone name")
+    zone_type: Optional[str] = Field(None, description="SHELF | DISPLAY | BILLING")
+    is_revenue_zone: Optional[str] = Field(None, description="Yes | No")
+    zone_hotspot_x: Optional[float] = Field(None, description="Detection centroid X")
+    zone_hotspot_y: Optional[float] = Field(None, description="Detection centroid Y")
+
+    # Dwell / duration
+    dwell_ms: int = Field(0, ge=0, description="Duration in ms; 0 for instantaneous")
+
+    # Staff flag
+    is_staff: bool = Field(False, description="Whether this person is store staff")
+
+    # Detection confidence
+    confidence: float = Field(0.5, ge=0.0, le=1.0, description="Detection confidence")
+
+    # Demographics (from face analysis — nullable)
+    gender_pred: Optional[str] = Field(None, description="M | F | null")
+    age_pred: Optional[int] = Field(None, description="Estimated age")
+    age_bucket: Optional[str] = Field(None, description="18-24, 25-34, 35-44, etc.")
+    is_face_hidden: Optional[bool] = Field(None, description="Face not visible")
+
+    # Group detection
+    group_id: Optional[str] = Field(None, description="Group identifier")
+    group_size: Optional[int] = Field(None, description="Number in group")
+
+    # Queue timing fields
+    queue_join_ts: Optional[str] = Field(None, description="When person joined queue")
+    queue_served_ts: Optional[str] = Field(None, description="When person reached counter")
+    queue_exit_ts: Optional[str] = Field(None, description="When person left queue area")
+    wait_seconds: Optional[int] = Field(None, description="Total wait time in seconds")
+    queue_position_at_join: Optional[int] = Field(None, description="Position when joining")
+    abandoned: Optional[bool] = Field(None, description="True if left without purchase")
+
+    # Legacy metadata
+    metadata: Optional[EventMetadata] = Field(default_factory=EventMetadata)
+
+    @field_validator("event_id", mode="before")
     @classmethod
-    def validate_event_id(cls, v: str) -> str:
+    def validate_event_id(cls, v):
+        if v is None:
+            return v
         try:
-            uuid.UUID(v, version=4)
+            uuid.UUID(str(v), version=4)
         except ValueError:
             raise ValueError(f"event_id must be a valid UUID v4, got: {v}")
-        return v
+        return str(v)
+
+    def get_effective_id(self) -> str:
+        """Return the best available event identifier."""
+        return self.event_id or self.queue_event_id or str(uuid.uuid4())
+
+    def get_effective_store(self) -> str:
+        """Return the best available store identifier."""
+        return self.store_id or self.store_code or "UNKNOWN"
+
+    def get_effective_visitor(self) -> str:
+        """Return the best available visitor identifier."""
+        return self.visitor_id or self.id_token or (f"TRK_{self.track_id}" if self.track_id else "UNKNOWN")
+
+    def get_effective_timestamp(self) -> str:
+        """Return the best available timestamp as ISO string."""
+        if self.timestamp:
+            return self.timestamp.isoformat()
+        return self.event_timestamp or self.event_time or datetime.utcnow().isoformat()
 
 
 class EventBatch(BaseModel):
@@ -93,8 +158,21 @@ class IngestResponse(BaseModel):
 
 class ZoneDwell(BaseModel):
     zone_id: str
+    zone_name: Optional[str] = None
+    zone_type: Optional[str] = None
     avg_dwell_ms: float
     visit_count: int
+
+
+class GenderSplit(BaseModel):
+    male: int = 0
+    female: int = 0
+    unknown: int = 0
+
+
+class AgeBucketCount(BaseModel):
+    bucket: str
+    count: int
 
 
 class MetricsResponse(BaseModel):
@@ -103,9 +181,14 @@ class MetricsResponse(BaseModel):
     unique_visitors: int = 0
     conversion_rate: float = 0.0
     total_purchases: int = 0
+    total_events: int = 0
     avg_dwell_by_zone: list[ZoneDwell] = Field(default_factory=list)
     current_queue_depth: int = 0
+    avg_wait_seconds: float = 0.0
     abandonment_rate: float = 0.0
+    gender_split: Optional[GenderSplit] = None
+    age_distribution: list[AgeBucketCount] = Field(default_factory=list)
+    top_brands: list[dict] = Field(default_factory=list)
 
 
 # ─── Funnel Response ──────────────────────────────────────────────────────────
@@ -125,6 +208,8 @@ class FunnelResponse(BaseModel):
 
 class ZoneHeat(BaseModel):
     zone_id: str
+    zone_name: Optional[str] = None
+    zone_type: Optional[str] = None
     visit_count: int
     avg_dwell_ms: float
     normalised_score: float = Field(..., ge=0, le=100)
@@ -132,7 +217,7 @@ class ZoneHeat(BaseModel):
 
 class HeatmapResponse(BaseModel):
     store_id: str
-    data_confidence: str = "normal"  # "low" if < 20 sessions
+    data_confidence: str = "normal"
     zones: list[ZoneHeat] = Field(default_factory=list)
 
 
@@ -157,7 +242,7 @@ class StoreHealth(BaseModel):
     store_id: str
     last_event_at: Optional[datetime] = None
     event_count: int = 0
-    status: str = "OK"  # OK | STALE_FEED
+    status: str = "OK"
 
 
 class HealthResponse(BaseModel):

@@ -107,6 +107,23 @@ ZONES = {
     "ENTRY": {"display_name": "Entry/Exit", "camera": "CAM_03"},
 }
 
+# Zone metadata — matches Purplle's expected zone_name, zone_type, is_revenue_zone
+ZONE_METADATA = {
+    "SKINCARE":      {"zone_name": "Skincare Wall",      "zone_type": "SHELF",   "is_revenue_zone": "Yes"},
+    "KOREAN_BEAUTY": {"zone_name": "Korean Beauty",      "zone_type": "SHELF",   "is_revenue_zone": "Yes"},
+    "CLEAN_BEAUTY":  {"zone_name": "Clean Beauty",       "zone_type": "SHELF",   "is_revenue_zone": "Yes"},
+    "MAKEUP":        {"zone_name": "Makeup Counter",     "zone_type": "SHELF",   "is_revenue_zone": "Yes"},
+    "ACCESSORIES":   {"zone_name": "Accessories Wall",   "zone_type": "DISPLAY", "is_revenue_zone": "Yes"},
+    "FRAGRANCE":     {"zone_name": "Fragrance Corner",   "zone_type": "DISPLAY", "is_revenue_zone": "Yes"},
+    "FOH":           {"zone_name": "Front of House",     "zone_type": "DISPLAY", "is_revenue_zone": "No"},
+    "BILLING":       {"zone_name": "Billing Counter",    "zone_type": "BILLING", "is_revenue_zone": "Yes"},
+    "CASH_COUNTER":  {"zone_name": "Cash Counter Queue", "zone_type": "BILLING", "is_revenue_zone": "Yes"},
+    "ENTRY":         {"zone_name": "Store Entrance",     "zone_type": "ENTRY",   "is_revenue_zone": "No"},
+}
+
+# Store code alias (used in entry/exit events per Purplle's sample)
+STORE_CODE = f"store_{STORE_ID.replace('ST', '')}"  # "store_1008"
+
 # ─── Detection Thresholds ────────────────────────────────────────────────────
 
 DETECTION_CONFIDENCE_THRESHOLD = 0.3  # Don't suppress low confidence — flag them
