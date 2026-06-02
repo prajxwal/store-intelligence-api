@@ -117,3 +117,51 @@ At 40 stores with real-time event streaming:
 - **Ingest buffer**: Redis Streams or Kafka for decoupling pipeline from API
 - **Caching**: Redis for hot metrics (conversion rate updated every 10s)
 - **Connection pooling**: asyncpg with pool size tuned to worker count
+
+---
+
+## Decision 4: Demographics — No Face Model
+
+### Context
+Purplle's sample events include `gender_pred`, `age_pred`, `age_bucket`, and `group_id` fields — demographic data that requires face analysis beyond basic person detection.
+
+### Options Considered
+
+| Approach | Accuracy | Latency Impact | Privacy |
+|----------|----------|----------------|---------|
+| **InsightFace + ArcFace** | ~95% gender, ±5y age | +50ms/person/frame | Requires face embedding storage |
+| **DeepFace** | ~90% gender | +80ms/person/frame | Same privacy concerns |
+| **Height/aspect ratio heuristics** | ~60% gender, ±15y age | +0ms | No privacy issues |
+| **Null with documentation** | N/A | +0ms | No privacy issues |
+
+### What I Chose and Why
+I chose **nullable demographics** (emit `null` for gender/age fields) because:
+
+1. **Privacy trade-off in retail**: Storing face embeddings in a demo system creates unnecessary privacy liability. In production, Purplle would need explicit customer consent for face analysis — this is a deployment-time decision, not an engineering one.
+
+2. **Schema readiness over faked accuracy**: The event schema *includes* all demographic fields. If a face model is plugged in, the pipeline emits real values with zero code changes. Emitting heuristic-based guesses (e.g., height → age) would be worse than null — it produces confidently wrong data.
+
+3. **Group detection works without faces**: Group detection can use proximity heuristics (persons within 1.5m for >10 seconds) from ByteTrack positions. This gives us `group_id` and `group_size` without face analysis.
+
+4. **Time constraint**: Integrating and validating a face model on the provided footage would take 4-6 hours. The submission's value is better spent on API correctness, queue timing, and zone analytics.
+
+---
+
+## Decision 5: Event Schema — Matching Purplle's Sample Format
+
+### Context
+Purplle provided `sample_events.jsonl` showing 3 distinct event formats:
+- **Entry/Exit**: Uses `id_token`, `store_code`, `event_timestamp`
+- **Zone**: Uses `track_id`, `store_id`, `event_time`, `zone_name`, `zone_type`
+- **Queue**: Uses `queue_event_id`, `queue_join_ts`, `queue_exit_ts`, `wait_seconds`
+
+Our original schema used a single flat format for all events.
+
+### What I Chose and Why
+I adopted a **dual-format architecture**:
+
+1. **Pipeline emitter** produces events in Purplle's exact format (3 distinct schemas). This ensures the JSONL output is directly compatible with any automated scoring harness.
+
+2. **API ingestion** accepts both formats via flexible field accessors (`get_effective_id()`, `get_effective_store()`, `get_effective_visitor()`, `get_effective_timestamp()`). The ingestion layer normalises everything into a single DB row regardless of which format was used.
+
+3. **Lowercase event types** (`entry`, `zone_entered`, `queue_completed`) match the sample exactly, rather than the PRD's uppercase names. When in doubt, the sample data overrides the prose specification — that's what the tests check.

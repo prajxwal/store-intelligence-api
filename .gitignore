@@ -41,3 +41,7 @@ Thumbs.db
 
 # Dataset (large files — not tracked)
 Dataset/
+*.csv
+*.jsonl
+*.zip
+*.xlsx
